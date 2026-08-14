@@ -48,6 +48,30 @@ PLATFORM_HOSTS = {
     "xiaohongshu": ("xiaohongshu.com", "xhslink.com"),
     "weixin-channels": ("channels.weixin.qq.com",),
 }
+PLATFORM_COOKIE_DOMAINS = {
+    "bilibili": ("bilibili.com", "b23.tv"),
+    "douyin": ("douyin.com", "iesdouyin.com"),
+    "xiaohongshu": ("xiaohongshu.com", "xhslink.com"),
+    "weixin-channels": ("weixin.qq.com", "channels.weixin.qq.com"),
+}
+AUTH_ERROR_RE = re.compile(
+    r"(?:login|log[ -]?in|sign[ -]?in|cookie|fresh cookies|authentication|unauthorized|forbidden|"
+    r"HTTP Error 401|HTTP Error 403|登录|验证|权限|反爬)",
+    re.IGNORECASE,
+)
+UNSUPPORTED_ERROR_RE = re.compile(r"(?:unsupported url|no suitable extractor|not supported)", re.IGNORECASE)
+
+
+class WorkflowError(RuntimeError):
+    def __init__(self, code: str, message: str, next_action: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.next_action = next_action
+
+
+def emit_stage(stage: str, status: str, message: str, **extra: Any) -> None:
+    event = {"event": "stage", "stage": stage, "status": status, "message": message, **extra}
+    print(json.dumps(event, ensure_ascii=False), flush=True)
 
 
 def module_available(name: str) -> bool:
@@ -70,10 +94,40 @@ def default_runtime_dir() -> Path:
     return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "video-audio-transcribe/runtime"
 
 
+def apply_setup_config(args: argparse.Namespace) -> None:
+    config_path = Path(args.runtime_dir).expanduser().resolve().parent / "setup.json"
+    if not config_path.is_file():
+        return
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not args.download_root and config.get("download_root"):
+        args.download_root = config["download_root"]
+    if not args.model_path and config.get("model_path"):
+        args.model_path = config["model_path"]
+    if args.hf_endpoint == "auto" and config.get("hf_endpoint"):
+        args.hf_endpoint = config["hf_endpoint"]
+
+
 def ensure_modules(names: list[str], args: argparse.Namespace) -> None:
     missing = [name for name in names if not module_available(name)]
     if not missing:
         return
+    runtime_dir = Path(args.runtime_dir).expanduser().resolve()
+    python = runtime_python(runtime_dir)
+    current = Path(sys.executable).resolve()
+    if python.exists() and current != python.resolve():
+        import_check = subprocess.run(
+            [str(python), "-c", "; ".join(f"import {name}" for name in names)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if import_check.returncode == 0:
+            emit_stage("runtime", "cached", "Reusing the prepared isolated Python runtime")
+            child = subprocess.run([str(python), str(Path(__file__).resolve()), *sys.argv[1:]])
+            raise SystemExit(child.returncode)
     packages = ", ".join(CORE_IMPORTS[name] for name in missing)
     install_policy = "never" if args.no_install else args.install
     if install_policy == "never":
@@ -90,9 +144,6 @@ def ensure_modules(names: list[str], args: argparse.Namespace) -> None:
         if answer not in {"y", "yes"}:
             raise RuntimeError("dependency installation was not approved")
 
-    runtime_dir = Path(args.runtime_dir).expanduser().resolve()
-    python = runtime_python(runtime_dir)
-    current = Path(sys.executable).resolve()
     if python.exists() and current == python.resolve():
         raise RuntimeError("isolated runtime is active but dependencies are still missing")
 
@@ -106,12 +157,18 @@ def ensure_modules(names: list[str], args: argparse.Namespace) -> None:
     ]
     if args.offline:
         command.append("--offline")
+    if args.wheel_dir:
+        command.extend(["--wheel-dir", str(Path(args.wheel_dir).expanduser().resolve())])
     command.extend(CORE_IMPORTS.values())
+    emit_stage("runtime", "running", "Preparing an isolated Python runtime")
     result = subprocess.run(command)
     if result.returncode != 0:
         raise RuntimeError("automatic runtime setup failed; see references/setup.md")
     python = runtime_python(runtime_dir)
-    os.execv(str(python), [str(python), str(Path(__file__).resolve()), *sys.argv[1:]])
+    # Keep the original process alive so WorkBuddy/Windows task wrappers continue
+    # tracking the job while the isolated interpreter runs.
+    child = subprocess.run([str(python), str(Path(__file__).resolve()), *sys.argv[1:]])
+    raise SystemExit(child.returncode)
 
 
 def normalize_input(value: str) -> tuple[str, bool]:
@@ -200,21 +257,89 @@ def validate_public_url(url: str, allow_private_network: bool = False) -> None:
 
 
 def browser_candidates(choice: str) -> list[Optional[str]]:
-    if choice == "none":
-        return [None]
-    if choice != "auto":
-        return [choice]
-    candidates: list[Optional[str]] = [None]
-    browser_paths = {
-        "chrome": ["/Applications/Google Chrome.app", shutil.which("google-chrome"), shutil.which("chrome")],
-        "edge": ["/Applications/Microsoft Edge.app", shutil.which("microsoft-edge")],
-        "firefox": ["/Applications/Firefox.app", shutil.which("firefox")],
-        "safari": ["/Applications/Safari.app"] if platform.system() == "Darwin" else [],
+    # Never enumerate or try every installed browser. A named browser means the
+    # user explicitly approved that single profile for this job.
+    return [None] if choice == "none" else [choice]
+
+
+def allowed_cookie_domains(url: str) -> tuple[str, ...]:
+    hostname = (urlparse(url).hostname or "").lower().lstrip(".")
+    platform_name = detect_platform(url)
+    return PLATFORM_COOKIE_DOMAINS.get(platform_name, (hostname,))
+
+
+def cookie_domain_allowed(cookie_domain: str, allowed: tuple[str, ...]) -> bool:
+    domain = cookie_domain.lower().lstrip(".")
+    return any(domain == item or domain.endswith("." + item) for item in allowed)
+
+
+def create_scoped_cookie_file(source: Path, url: str, output_dir: Path) -> tuple[Path, dict[str, Any]]:
+    if not source.is_file():
+        raise WorkflowError("COOKIE_FILE_MISSING", "cookie file does not exist", "provide_cookie_file")
+    allowed = allowed_cookie_domains(url)
+    kept: list[str] = []
+    total_cookie_lines = 0
+    for raw_line in source.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw_line
+        candidate = line[len("#HttpOnly_") :] if line.startswith("#HttpOnly_") else line
+        if not candidate or candidate.startswith("#"):
+            continue
+        parts = candidate.split("\t")
+        if len(parts) < 7:
+            continue
+        total_cookie_lines += 1
+        if cookie_domain_allowed(parts[0], allowed):
+            kept.append(line)
+    if not kept:
+        raise WorkflowError(
+            "COOKIE_SCOPE_EMPTY",
+            "cookie file contains no cookies for the requested site",
+            "export_site_scoped_cookie_file_or_provide_local_media",
+        )
+    private_dir = output_dir / ".private"
+    private_dir.mkdir(parents=True, exist_ok=True)
+    target = private_dir / "cookies.scoped.txt"
+    atomic_write_text(target, "# Netscape HTTP Cookie File\n" + "\n".join(kept) + "\n")
+    try:
+        target.chmod(0o600)
+    except OSError:
+        pass
+    return target, {
+        "allowed_domains": list(allowed),
+        "included_cookie_count": len(kept),
+        "excluded_cookie_count": total_cookie_lines - len(kept),
     }
-    for browser, paths in browser_paths.items():
-        if any(path and Path(path).exists() for path in paths):
-            candidates.append(browser)
-    return candidates
+
+
+def cleanup_scoped_cookie_file(path: Optional[Path]) -> None:
+    if not path:
+        return
+    try:
+        path.unlink(missing_ok=True)
+        path.parent.rmdir()
+    except OSError:
+        pass
+
+
+def classify_download_failure(error: Any) -> WorkflowError:
+    message = sanitize_message(error)
+    if AUTH_ERROR_RE.search(message):
+        return WorkflowError(
+            "AUTH_REQUIRED",
+            "the site requires an authenticated session",
+            "use_browser_media_handoff_then_local_file_or_site_scoped_cookie_file",
+        )
+    if UNSUPPORTED_ERROR_RE.search(message):
+        return WorkflowError(
+            "UNSUPPORTED_URL",
+            "no supported public extractor is available for this URL",
+            "use_browser_media_handoff_or_provide_local_media",
+        )
+    return WorkflowError(
+        "DOWNLOAD_FAILED",
+        "the public download attempt failed",
+        "retry_later_or_provide_local_media",
+    )
 
 
 def choose_subtitle(
@@ -329,6 +454,7 @@ def download_from_url(url: str, output_dir: Path, args: argparse.Namespace) -> d
     ensure_modules(["yt_dlp"], args)
     import yt_dlp
 
+    emit_stage("metadata", "running", "Checking public metadata and subtitles")
     cookie_attempts = [None] if args.cookie_file else browser_candidates(args.cookies)
     last_error: Optional[Exception] = None
     info: Optional[dict[str, Any]] = None
@@ -358,7 +484,7 @@ def download_from_url(url: str, output_dir: Path, args: argparse.Namespace) -> d
                 flush=True,
             )
     if info is None:
-        raise RuntimeError(f"unable to read media metadata: {sanitize_message(last_error)}")
+        raise classify_download_failure(last_error)
     validate_duration(info.get("duration"), args.max_duration)
 
     subtitle_path: Optional[Path] = None
@@ -426,15 +552,23 @@ def download_from_url(url: str, output_dir: Path, args: argparse.Namespace) -> d
         ffmpeg = find_ffmpeg(args)
         if ffmpeg:
             media_options["ffmpeg_location"] = ffmpeg
-    with yt_dlp.YoutubeDL(media_options) as ydl:
-        ydl.download([url])
+    emit_stage("download", "running", "Downloading media with resume enabled")
+    try:
+        with yt_dlp.YoutubeDL(media_options) as ydl:
+            ydl.download([url])
+    except Exception as error:
+        raise classify_download_failure(error) from error
     media_candidates = sorted(
         [p for p in media_dir.glob("source.*") if p.is_file() and not p.name.endswith((".part", ".ytdl"))],
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
     if not media_candidates:
-        raise RuntimeError("download reported success but no media file was found")
+        raise WorkflowError(
+            "DOWNLOAD_INCOMPLETE",
+            "download did not produce a complete media file",
+            "rerun_same_command_to_resume_or_provide_local_media",
+        )
     webpage_url = info.get("webpage_url") or url
     validate_public_url(webpage_url, args.allow_private_network)
     return {
@@ -482,10 +616,10 @@ def parse_srt_or_vtt(path: Path) -> list[dict[str, Any]]:
     return segments
 
 
-def endpoint_reachable(url: str) -> bool:
+def endpoint_reachable(url: str, timeout: float = 15.0) -> bool:
     try:
         request = Request(url, method="HEAD", headers={"User-Agent": "video-audio-transcribe/2"})
-        with urlopen(request, timeout=5) as response:
+        with urlopen(request, timeout=timeout) as response:
             return 200 <= response.status < 500
     except Exception:
         return False
@@ -493,12 +627,13 @@ def endpoint_reachable(url: str) -> bool:
 
 def configure_huggingface(args: argparse.Namespace) -> None:
     os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
-    os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "10")
-    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
+    os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "30")
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "300")
     if args.hf_endpoint == "auto" and not os.environ.get("HF_ENDPOINT") and not args.offline:
-        if endpoint_reachable("https://huggingface.co"):
+        emit_stage("model_endpoint", "running", "Selecting an available model endpoint")
+        if endpoint_reachable("https://huggingface.co", args.endpoint_timeout):
             os.environ["HF_ENDPOINT"] = "https://huggingface.co"
-        elif endpoint_reachable("https://hf-mirror.com"):
+        elif endpoint_reachable("https://hf-mirror.com", args.endpoint_timeout):
             os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
     elif args.hf_endpoint == "mirror":
         os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
@@ -541,7 +676,15 @@ def transcribe_media(path: Path, args: argparse.Namespace) -> tuple[list[dict[st
                 "provide --model-path or allow a download"
             ) from error
     elif args.model_download == "auto":
-        resolved_model = download_model(model_value, local_files_only=False, cache_dir=download_root)
+        emit_stage("model", "running", "Downloading or resuming the Whisper model")
+        try:
+            resolved_model = download_model(model_value, local_files_only=False, cache_dir=download_root)
+        except Exception as error:
+            raise WorkflowError(
+                "MODEL_UNAVAILABLE",
+                "the Whisper model could not be downloaded from the selected endpoint",
+                "retry_with_hf_endpoint_mirror_or_provide_model_path_or_offline_cache",
+            ) from error
     else:
         try:
             resolved_model = download_model(model_value, local_files_only=True, cache_dir=download_root)
@@ -556,17 +699,38 @@ def transcribe_media(path: Path, args: argparse.Namespace) -> tuple[list[dict[st
             ).strip().lower()
             if answer not in {"y", "yes"}:
                 raise RuntimeError("Whisper model download was not approved") from cached_error
-            resolved_model = download_model(model_value, local_files_only=False, cache_dir=download_root)
+            emit_stage("model", "running", "Downloading or resuming the Whisper model")
+            try:
+                resolved_model = download_model(model_value, local_files_only=False, cache_dir=download_root)
+            except Exception as error:
+                raise WorkflowError(
+                    "MODEL_UNAVAILABLE",
+                    "the Whisper model could not be downloaded from the selected endpoint",
+                    "retry_with_hf_endpoint_mirror_or_provide_model_path_or_offline_cache",
+                ) from error
     model = WhisperModel(resolved_model, device=device, compute_type=compute_type)
     kwargs: dict[str, Any] = {"beam_size": args.beam_size, "vad_filter": True}
     if args.language != "auto":
         kwargs["language"] = args.language
     raw_segments, info = model.transcribe(str(path), **kwargs)
     segments = []
+    emit_stage("transcribe", "running", "Transcribing speech locally")
+    last_progress = time.monotonic()
     for segment in raw_segments:
         text = segment.text.strip()
         if text:
             segments.append({"start": float(segment.start), "end": float(segment.end), "text": text})
+        if time.monotonic() - last_progress >= args.progress_interval:
+            duration = float(info.duration) if info.duration else 0.0
+            progress = min(99, round(float(segment.end) / duration * 100)) if duration else None
+            emit_stage(
+                "transcribe",
+                "running",
+                "Transcription is still running",
+                progress_percent=progress,
+                processed_seconds=round(float(segment.end), 1),
+            )
+            last_progress = time.monotonic()
     return segments, {
         "language": info.language,
         "language_probability": float(info.language_probability),
@@ -603,7 +767,46 @@ def write_transcript_outputs(
     }
 
 
+def resume_if_complete(output_dir: Path, normalized_input: str) -> Optional[dict[str, Any]]:
+    paths = {
+        "spoken_script": output_dir / "spoken-script.txt",
+        "timestamped_transcript": output_dir / "timestamped-transcript.txt",
+        "transcript_json": output_dir / "transcript.json",
+        "faithfulness": output_dir / "faithfulness.json",
+        "metadata": output_dir / "metadata.json",
+    }
+    if not all(path.is_file() for path in paths.values()):
+        return None
+    try:
+        report = json.loads(paths["faithfulness"].read_text(encoding="utf-8"))
+        metadata = json.loads(paths["metadata"].read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not report.get("exact_match_ignoring_whitespace"):
+        return None
+    if metadata.get("normalized_input") != normalized_input:
+        return None
+    return {
+        "status": "ok",
+        "resumed": True,
+        "outputs": {key: str(value) for key, value in paths.items()},
+        "metadata": metadata,
+    }
+
+
+def write_job_state(output_dir: Path, stage: str, status: str, **extra: Any) -> None:
+    data = {
+        "skill_version": (SKILL_DIR / "VERSION").read_text(encoding="utf-8").strip(),
+        "stage": stage,
+        "status": status,
+        "updated_at_unix": round(time.time(), 3),
+        **extra,
+    }
+    atomic_write_text(output_dir / "job-state.json", json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+
 def doctor(args: argparse.Namespace) -> int:
+    apply_setup_config(args)
     report = {
         "skill_version": (SKILL_DIR / "VERSION").read_text(encoding="utf-8").strip()
         if (SKILL_DIR / "VERSION").is_file()
@@ -616,8 +819,12 @@ def doctor(args: argparse.Namespace) -> int:
         "imageio_ffmpeg": module_available("imageio_ffmpeg"),
         "ffmpeg_optional": shutil.which(os.environ.get("FFMPEG_CMD", "ffmpeg")),
         "runtime_dir": str(Path(args.runtime_dir).expanduser()),
+        "setup_config": str(Path(args.runtime_dir).expanduser().resolve().parent / "setup.json"),
         "network_required_for_urls": True,
         "browser_cookies_default": "none",
+        "browser_cookie_auto_discovery": False,
+        "site_scoped_cookie_filtering": True,
+        "resume_default": True,
         "dependency_install_default": "ask",
         "model_download_default": "ask",
         "supported_input_classes": ["local-file", "yt-dlp-compatible-url"],
@@ -651,11 +858,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mp3-bitrate", default="192k")
     parser.add_argument(
         "--cookies",
-        choices=["auto", "none", "chrome", "edge", "firefox", "safari"],
+        choices=["none", "chrome", "edge", "firefox", "safari"],
         default="none",
-        help="Browser cookies are never read unless explicitly requested",
+        help="Read one explicitly approved browser profile; never auto-discovers browsers",
     )
-    parser.add_argument("--cookie-file")
+    parser.add_argument("--cookie-file", help="Netscape cookie file; only target-site cookies are copied to a temporary jar")
     parser.add_argument("--no-subtitles", action="store_true")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument(
@@ -666,8 +873,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--no-install", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--runtime-dir", default=str(default_runtime_dir()))
+    parser.add_argument("--wheel-dir", help="Offline wheel directory used with --offline")
     parser.add_argument("--pip-index", default="auto")
     parser.add_argument("--hf-endpoint", default="auto")
+    parser.add_argument("--endpoint-timeout", type=float, default=15.0)
+    parser.add_argument("--progress-interval", type=float, default=15.0)
+    parser.add_argument("--no-resume", action="store_true", help="Ignore existing complete outputs")
     parser.add_argument("--segments-per-paragraph", type=int, default=8)
     parser.add_argument("--max-duration", type=int, default=21600, help="Maximum seconds; 0 disables the limit")
     parser.add_argument("--max-file-size-mb", type=int, default=20480, help="Maximum local/downloaded media size; 0 disables")
@@ -684,6 +895,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    apply_setup_config(args)
     if args.doctor:
         return doctor(args)
     if not args.input:
@@ -696,21 +908,41 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     preflight_storage(output_dir, args.min_free_space_mb)
     input_value, is_url = normalize_input(args.input)
+    expected_normalized = redact_url(input_value) if is_url else Path(input_value).name
+    if not args.no_resume:
+        resumed = resume_if_complete(output_dir, expected_normalized or "")
+        if resumed:
+            emit_stage("complete", "cached", "Existing verified outputs were reused")
+            print(json.dumps(resumed, ensure_ascii=False, indent=2))
+            return 0
     if args.offline and is_url:
         raise RuntimeError("offline mode cannot process a URL; provide a local media file")
+    write_job_state(output_dir, "preflight", "running", input=expected_normalized)
 
     download: dict[str, Any] = {}
     source_path: Path
     subtitle_path: Optional[Path] = None
+    cookie_scope_report: Optional[dict[str, Any]] = None
+    scoped_cookie_path: Optional[Path] = None
     if is_url:
         validate_public_url(input_value, args.allow_private_network)
         platform_name = detect_platform(input_value)
         if platform_name == "weixin-channels":
-            raise RuntimeError(
-                "direct Weixin Channels/视频号 URL extraction is not supported reliably; "
-                "download or export the media yourself, then provide the local file"
+            raise WorkflowError(
+                "BROWSER_HANDOFF_REQUIRED",
+                "direct Weixin Channels/视频号 URL extraction is not supported reliably",
+                "use_an_approved_browser_session_to_save_media_then_process_the_local_file",
             )
-        download = download_from_url(input_value, output_dir, args)
+        if args.cookie_file:
+            scoped_cookie_path, cookie_scope_report = create_scoped_cookie_file(
+                Path(args.cookie_file).expanduser(), input_value, output_dir
+            )
+            args.cookie_file = str(scoped_cookie_path)
+        try:
+            write_job_state(output_dir, "download", "running", input=expected_normalized)
+            download = download_from_url(input_value, output_dir, args)
+        finally:
+            cleanup_scoped_cookie_file(scoped_cookie_path)
         source_path = Path(download["media_path"])
         subtitle_path = download.get("subtitle_path")
     else:
@@ -721,9 +953,11 @@ def main() -> int:
     validate_file_size(source_path, args.max_file_size_mb)
 
     if not is_url and source_path.suffix.lower() in {".srt", ".vtt"}:
+        emit_stage("subtitle", "running", "Parsing local subtitles")
         segments = parse_srt_or_vtt(source_path)
         transcript_meta = {"source": "subtitle", "subtitle_kind": "local", "language": args.language}
     elif subtitle_path:
+        emit_stage("subtitle", "running", "Using the platform subtitle track")
         segments = parse_srt_or_vtt(Path(subtitle_path))
         transcript_meta = {
             "source": "subtitle",
@@ -733,6 +967,7 @@ def main() -> int:
             "duration": download.get("duration"),
         }
     else:
+        write_job_state(output_dir, "transcribe", "running", input=expected_normalized)
         segments, transcript_meta = transcribe_media(source_path, args)
         transcript_meta["source"] = "whisper"
 
@@ -752,10 +987,19 @@ def main() -> int:
         "title": download.get("title"),
         "webpage_url": redact_url(download.get("webpage_url")),
         "cookie_browser_used": download.get("browser"),
+        "authentication": {
+            "mode": "site_scoped_cookie_file"
+            if cookie_scope_report
+            else ("approved_browser_profile" if download.get("browser") else "none"),
+            "cookie_scope": cookie_scope_report,
+            "cookie_values_stored": False,
+        },
         "transcript": transcript_meta,
         "elapsed_seconds": round(time.time() - started, 3),
     }
     outputs = write_transcript_outputs(output_dir, segments, metadata, args)
+    write_job_state(output_dir, "complete", "ok", input=expected_normalized, faithfulness=metadata["faithfulness"])
+    emit_stage("complete", "ok", "Transcript and faithful spoken script are ready")
     result = {"status": "ok", "outputs": {key: str(value) for key, value in outputs.items()}, "metadata": metadata}
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
@@ -764,6 +1008,26 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
+    except WorkflowError as error:
+        print(
+            json.dumps(
+                {"status": "error", "code": error.code, "message": str(error), "next_action": error.next_action},
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     except (RuntimeError, FileNotFoundError, ValueError) as error:
-        print(f"error: {error}", file=sys.stderr)
+        print(
+            json.dumps(
+                {
+                    "status": "error",
+                    "code": "WORKFLOW_FAILED",
+                    "message": sanitize_message(error),
+                    "next_action": "rerun_same_command_to_resume_or_provide_local_media",
+                },
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
         raise SystemExit(1)

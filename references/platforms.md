@@ -14,3 +14,5 @@ Read this reference before promising that a site is supported.
 “Listed by yt-dlp” does not guarantee that every URL works forever. Report the actual result, source, authentication mode, and fallback. Never describe the skill as guaranteed to support every platform.
 
 The runner accepts ordinary URLs, URLs without a scheme, and share text containing an `http://` or `https://` URL. It processes one media item at a time and refuses playlists/live-stream workflows unless a future version implements them explicitly.
+
+If a public attempt returns an authentication or unsupported-extractor error, do not explore arbitrary fallback APIs. Prefer a user-approved browser session that saves the media locally; otherwise request a site-scoped Cookie export or local media file.

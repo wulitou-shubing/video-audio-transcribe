@@ -2,6 +2,8 @@
 
 A local-first Agent Skill that turns media URLs or local audio/video into timestamped transcripts and a faithful spoken-script artifact. Spoken-script organization may change whitespace and paragraph boundaries only; it must not add, remove, or reorder transcript characters.
 
+Current version: `v3.1.0`
+
 [简体中文](README.md)
 
 ## Highlights
@@ -12,6 +14,7 @@ A local-first Agent Skill that turns media URLs or local audio/video into timest
 - Optional full-video download and MP3 extraction.
 - URL secret redaction and private-network blocking.
 - No browser-cookie access by default and no silent dependency installation in non-interactive hosts.
+- Approved browser-session media handoff, target-site Cookie filtering, and resumable WorkBuddy/Windows execution.
 - Installer for common Agent Skills, Codex, and WorkBuddy locations.
 
 ## Quick start
@@ -22,7 +25,10 @@ Clone the repository from GitHub/Gitee, or download and extract the Release ZIP.
 
 ```bash
 python scripts/install_skill.py --host auto
+python scripts/setup.py
 ```
+
+The setup command presents one combined confirmation for the isolated runtime and Whisper model. In a non-interactive host, ask once and then run `python scripts/setup.py --yes`. It never reads browser cookies.
 
 Or run directly:
 
@@ -30,7 +36,9 @@ Or run directly:
 python scripts/run.py "MEDIA_URL_OR_LOCAL_FILE" --output-dir transcription-output
 ```
 
-Missing dependencies and uncached Whisper models are downloaded only after separate interactive confirmations. After explicit approval in a non-interactive host, pass `--install auto` and/or `--model-download auto`. Browser cookies default to `none`; use a named browser or cookie file only with explicit approval.
+Rerun an interrupted job with the same command and output directory; completed verified outputs, cached models, and partial downloads are reused.
+
+Public access is attempted without cookies. For authenticated content, prefer an approved existing browser session that saves the media locally without exposing Cookie values. If browser handoff is unavailable, pass a site-only Netscape Cookie file with `--cookie-file`; the runner filters it into a temporary target-domain jar and deletes that copy. Direct named-browser Cookie reading is an explicitly approved, one-profile last resort and never auto-enumerates browsers.
 
 Weixin Channels direct URLs are not promised. Export/download authorized media yourself and provide the local file. Support for every website is best effort and can change with authentication, region, and upstream extractor behavior.
 

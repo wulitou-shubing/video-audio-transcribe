@@ -8,7 +8,8 @@ Never attach browser cookie files, authorization headers, unredacted signed URLs
 
 ## Security model
 
-- Browser cookies are opt-in.
+- Public access is Cookie-free. Browser profiles are never auto-enumerated.
+- Prefer browser-session media handoff without exposing Cookie values. User Cookie files are filtered to target-platform domains in a temporary jar that is removed after use.
 - Dependency and uncached-model downloads are confirm-first; non-interactive execution does not download them by default.
 - Local, private, link-local, reserved, and other non-global URL targets are blocked unless a trusted user explicitly passes `--allow-private-network`.
 - Common token/signature URL parameters are redacted from generated metadata and yt-dlp logger output.

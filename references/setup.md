@@ -11,7 +11,15 @@ Read this reference only when setup, restricted networking, browser cookies, hos
 
 ## Isolated runtime and installation consent
 
-`scripts/run.py` reuses installed packages when possible. The default `--install ask` asks before it creates an isolated environment and installs packages. In a non-interactive agent it stops instead of installing silently.
+Prefer a single beginner setup that combines runtime and model consent:
+
+```bash
+python scripts/setup.py
+```
+
+In a non-interactive agent, show the complete plan once, obtain approval, then run `python scripts/setup.py --yes`. The command stores a reusable setup configuration next to the managed runtime and emits heartbeat progress while the model is prepared.
+
+`scripts/run.py` still supports separate `--install` and `--model-download` policies for advanced automation.
 
 After explicit approval, use:
 
@@ -57,27 +65,33 @@ python scripts/run.py LOCAL_MEDIA --offline --model-path /path/to/model
 
 `WHISPER_MODEL_DIR` sets the model cache directory. `HF_ENDPOINT` remains authoritative when already set and `--hf-endpoint auto` is used.
 
-For fully offline dependency installation, place compatible wheels in `vendor/wheels`, then run with `--offline`. Do not commit large wheels or model files to Git unless the repository owner has intentionally chosen that distribution strategy and verified licenses.
+For a fully offline machine, use the same version with a compatible wheel directory and a local CTranslate2 model:
+
+```bash
+python scripts/setup.py --offline --wheel-dir /path/to/wheels --model-path /path/to/model
+```
+
+Do not commit large wheels or model files to Git unless the repository owner has intentionally chosen that distribution strategy and verified licenses.
 
 ## Cookies and authentication
 
-The default `--cookies none` never reads a browser profile. Reading browser cookies can expose sessions for unrelated websites, so obtain explicit approval first.
+The default `--cookies none` never reads a browser profile. On `AUTH_REQUIRED`, prefer a supported host browser tool after one consolidated approval: open only the target page, save/download the media to the local job directory, and process that local file. Do not inspect cookies, local storage, passwords, or session stores.
 
-Choose a browser explicitly:
+If browser handoff is unavailable, export a target-site Netscape Cookie file:
+
+```bash
+python scripts/run.py URL --cookie-file /path/to/site-only-cookies.txt
+```
+
+The runner filters it into a temporary Cookie jar containing only domains associated with the target platform, applies restrictive permissions where supported, and removes the temporary copy after the attempt. The original user file is never modified.
+
+Direct browser-profile access is an advanced last resort after explicit approval for one named profile:
 
 ```bash
 python scripts/run.py URL --cookies chrome
-python scripts/run.py URL --cookies edge
-python scripts/run.py URL --cookies firefox
 ```
 
-When browser cookie decryption is blocked, export a Netscape-format cookie file and use:
-
-```bash
-python scripts/run.py URL --cookie-file /path/to/cookies.txt
-```
-
-Never commit cookie files. Only download media the user is authorized to access and follow the source site's terms.
+Try a named profile once. Never use `auto`, enumerate browsers, or cycle through Chrome/Edge/Firefox. Never commit Cookie files. Only download media the user is authorized to access and follow the source site's terms.
 
 ## GitHub and non-GitHub distribution
 
@@ -96,7 +110,9 @@ python scripts/run.py --doctor
 Common interpretations:
 
 - Missing Python dependency: allow automatic setup or select a reachable package index.
-- URL fails without cookies: use an installed browser or `--cookie-file`.
+- `AUTH_REQUIRED`: use an approved browser media handoff, a target-site Cookie file, or local media.
+- `UNSUPPORTED_URL` / `BROWSER_HANDOFF_REQUIRED`: use browser handoff or local media; do not improvise undocumented APIs.
+- `DOWNLOAD_INCOMPLETE`: rerun the same command and output directory.
 - Local offline transcription fails: supply `--model-path` and ensure dependencies are cached.
 - Site format failure: keep the default `bestaudio/best` for transcription; request full video only when required.
 - `faithfulness.json` is false or missing: do not deliver `spoken-script.txt` as a faithful output.

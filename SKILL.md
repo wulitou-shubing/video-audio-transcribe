@@ -5,7 +5,17 @@ description: Download online video or audio from yt-dlp-compatible sites, proces
 
 # Video Audio Transcribe
 
-Turn a URL or local media file into reproducible transcript artifacts with one command.
+Turn a URL or local media file into resumable transcript artifacts with one command. Keep this workflow deterministic; do not improvise undocumented download or anti-bot methods.
+
+## Prepare once
+
+On first use, present one combined confirmation covering the isolated runtime and the Whisper model. After approval, run in the foreground:
+
+```bash
+python scripts/setup.py --yes
+```
+
+This setup never reads browser cookies. It reuses caches, selects the official or mirror model endpoint, keeps the parent process alive on Windows/WorkBuddy, and emits short progress heartbeats. For a fully offline machine, use `--offline --wheel-dir WHEELS --model-path MODEL_DIR` with the same script.
 
 ## Run the workflow
 
@@ -32,7 +42,7 @@ Use `--doctor` first only when setup is uncertain:
 python scripts/run.py --doctor
 ```
 
-The runner asks before creating an isolated runtime, installing missing Python dependencies, or downloading an uncached Whisper model. In a non-interactive host, it stops safely; use `--install auto` and/or `--model-download auto` only after the user approves the corresponding download. If setup fails, read [references/setup.md](references/setup.md).
+Prefer the one-time setup command instead of answering separate dependency and model questions during a job. If a job is interrupted, rerun exactly the same command and output directory; verified outputs and partial downloads are reused by default. Never move a normal job into an untracked background process.
 
 ## Preserve spoken content exactly
 
@@ -54,10 +64,21 @@ If the user requests rewriting or summarization, create a separate clearly named
 - Prefer manually authored subtitles over automatic subtitles.
 - Prefer subtitles matching `--language`; otherwise use Whisper.
 - Use `--no-subtitles` to force Whisper.
-- Use no browser cookies by default. Never read a browser profile without explicit user approval.
-- After approval, use `--cookies chrome` (or another named browser). Use `--cookies auto` only when the user approved trying detected browsers.
-- Use `--cookie-file PATH` when browser cookie decryption is unavailable.
+- Start every URL with one public, no-cookie attempt.
+- Never enumerate browsers, inspect cookie databases, local storage, passwords, or session stores automatically.
+- When one or more URLs return `AUTH_REQUIRED` or `BROWSER_HANDOFF_REQUIRED`, consolidate them into one user-facing decision.
+- Prefer an explicitly approved existing browser session: open only the target URLs with a supported host browser tool, save/download the media to the local job directory, then run this script on the local files. Never extract or display Cookie values during browser handoff.
+- If browser handoff is unavailable, accept a user-exported Netscape Cookie file with `--cookie-file PATH`. The runner copies only cookies matching the target platform into a permission-restricted temporary file and deletes that copy after the attempt.
+- Use `--cookies chrome` (or one other named browser) only as an advanced last resort after explicit approval for that single profile. Try it once; never cycle through installed browsers.
+- If the approved route fails, request a locally exported media file. Do not try undocumented APIs, signature generation, headless-browser bypasses, CAPTCHA workarounds, or unrelated skills.
 - For URL transcription, download audio by default. Only download full video when the user explicitly asks for it.
+
+Treat structured errors as terminal routing signals:
+
+- `AUTH_REQUIRED`: ask once for browser media handoff; otherwise request a site-scoped Cookie file or local media.
+- `BROWSER_HANDOFF_REQUIRED` / `UNSUPPORTED_URL`: use an approved browser session or local media.
+- `DOWNLOAD_INCOMPLETE`: rerun the same command and output directory.
+- `MODEL_UNAVAILABLE`: retry the mirror once or use a local/offline model.
 
 ## Work with restricted or offline environments
 

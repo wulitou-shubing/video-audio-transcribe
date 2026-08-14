@@ -10,6 +10,7 @@ import subprocess
 import sys
 import venv
 from pathlib import Path
+from typing import Optional
 
 
 CORE_PACKAGES = ("yt-dlp", "faster-whisper>=1.1,<2", "imageio-ffmpeg>=0.5,<1")
@@ -38,7 +39,7 @@ def runtime_python(runtime_dir: Path) -> Path:
     return runtime_dir / "bin" / "python"
 
 
-def install(runtime_dir: Path, packages: list[str], index: str, offline: bool) -> Path:
+def install(runtime_dir: Path, packages: list[str], index: str, offline: bool, wheel_dir: Optional[Path] = None) -> Path:
     python = runtime_python(runtime_dir)
     if not python.exists():
         runtime_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -46,7 +47,7 @@ def install(runtime_dir: Path, packages: list[str], index: str, offline: bool) -
         venv.EnvBuilder(with_pip=True, clear=False).create(runtime_dir)
 
     command = [str(python), "-m", "pip", "install", "--disable-pip-version-check"]
-    wheel_dir = Path(__file__).resolve().parents[1] / "vendor" / "wheels"
+    wheel_dir = wheel_dir or (Path(__file__).resolve().parents[1] / "vendor" / "wheels")
     if offline:
         if not wheel_dir.exists():
             raise RuntimeError(
@@ -78,9 +79,16 @@ def main() -> int:
     parser.add_argument("--runtime-dir", default=str(default_runtime_dir()))
     parser.add_argument("--pip-index", default="auto")
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--wheel-dir")
     parser.add_argument("packages", nargs="*", default=list(CORE_PACKAGES))
     args = parser.parse_args()
-    python = install(Path(args.runtime_dir), args.packages or list(CORE_PACKAGES), args.pip_index, args.offline)
+    python = install(
+        Path(args.runtime_dir),
+        args.packages or list(CORE_PACKAGES),
+        args.pip_index,
+        args.offline,
+        Path(args.wheel_dir).expanduser().resolve() if args.wheel_dir else None,
+    )
     print(python)
     return 0
 
