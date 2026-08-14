@@ -181,9 +181,12 @@ def normalize_input(value: str) -> tuple[str, bool]:
         if (parsed.hostname or "").lower() == "bilibili.com":
             parsed = parsed._replace(netloc="www.bilibili.com" + (f":{parsed.port}" if parsed.port else ""))
         return urlunparse(parsed), True
+    local_candidate = Path(candidate).expanduser()
+    if local_candidate.exists():
+        return str(local_candidate.resolve()), False
     if re.match(r"^(?:www\.)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/|$)", candidate):
         return normalize_input("https://" + candidate)
-    return str(Path(candidate).expanduser().resolve()), False
+    return str(local_candidate.resolve()), False
 
 
 def detect_platform(url: str) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -83,6 +84,18 @@ class CoreTests(unittest.TestCase):
         value, is_url = run.normalize_input("复制链接 https://bilibili.com/video/BV123?token=abc 打开")
         self.assertTrue(is_url)
         self.assertEqual(value, "https://www.bilibili.com/video/BV123?token=abc")
+
+    def test_existing_relative_media_name_is_not_mistaken_for_a_domain(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            previous = Path.cwd()
+            try:
+                os.chdir(temp)
+                Path("sample.srt").write_text("", encoding="utf-8")
+                value, is_url = run.normalize_input("sample.srt")
+            finally:
+                os.chdir(previous)
+        self.assertFalse(is_url)
+        self.assertEqual(Path(value).name, "sample.srt")
 
     def test_redacts_sensitive_and_long_random_query_values(self) -> None:
         value = run.redact_url(

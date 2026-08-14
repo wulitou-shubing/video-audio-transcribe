@@ -2,7 +2,7 @@
 
 A local-first Agent Skill that turns media URLs or local audio/video into timestamped transcripts and a faithful spoken-script artifact. Spoken-script organization may change whitespace and paragraph boundaries only; it must not add, remove, or reorder transcript characters.
 
-Current version: `v3.1.0`
+Current version: `v3.1.1`
 
 [简体中文](README.md)
 
