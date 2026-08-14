@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.part
+*.ytdl
+.DS_Store
+.runtime/
+.venv/
+.pytest_cache/
+models/
+transcription-output/
+cookies.txt
+cookies-*.txt
+*.cookies.txt

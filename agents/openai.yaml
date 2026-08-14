@@ -1,0 +1,4 @@
+interface:
+  display_name: "视频音频转写"
+  short_description: "Local-first transcription with a zero-drift spoken script"
+  default_prompt: "Use $video-audio-transcribe to transcribe this media and create a faithful spoken script without adding or removing spoken content."

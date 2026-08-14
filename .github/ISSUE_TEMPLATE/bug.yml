@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a reproducible failure without sharing private media or secrets
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach cookies, authorization headers, signed URLs, private media, or personal transcripts. Replace secrets with `[REDACTED]`.
+  - type: input
+    id: version
+    attributes:
+      label: Skill version
+      placeholder: "3.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: Host
+      options:
+        - Codex
+        - WorkBuddy
+        - Other Agent Skills host
+        - Direct command line
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Redacted command and error
+      description: Remove URL tokens, cookie paths, usernames, and private filesystem details.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor output
+      description: Paste `python scripts/run.py --doctor` after reviewing it for sensitive values.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I removed cookies, tokens, signed URLs, private media, and personal data.
+          required: true
