@@ -73,17 +73,19 @@ python scripts/setup.py --offline --wheel-dir /path/to/wheels --model-path /path
 
 Do not commit large wheels or model files to Git unless the repository owner has intentionally chosen that distribution strategy and verified licenses.
 
-## Cookies and authentication
+## WorkBuddy beginner authentication
 
-The default `--cookies none` never reads a browser profile. On `AUTH_REQUIRED`, prefer a supported host browser tool after one consolidated approval: open only the target page, save/download the media to the local job directory, and process that local file. Do not inspect cookies, local storage, passwords, or session stores.
+The default `--cookies none` never reads a browser profile. In WorkBuddy and other beginner-oriented hosts, do not invoke browser-control tools, Cookie tools, OCR, screenshot reading, or headless browser fallbacks. On `AUTH_REQUIRED`, ask once for a local media file that the user saved/exported from their own authorized browser/session.
 
-If browser handoff is unavailable, export a target-site Netscape Cookie file:
+## Expert CLI Cookie files
+
+If an expert user explicitly requests Cookie-file processing, use a target-site-only Netscape Cookie file:
 
 ```bash
 python scripts/run.py URL --cookie-file /path/to/site-only-cookies.txt
 ```
 
-The runner filters it into a temporary Cookie jar containing only domains associated with the target platform, applies restrictive permissions where supported, and removes the temporary copy after the attempt. The original user file is never modified.
+The runner validates that the file contains only domains associated with the target platform. Mixed all-browser exports are rejected; no temporary Cookie copy is written.
 
 Direct browser-profile access is an advanced last resort after explicit approval for one named profile:
 
@@ -95,7 +97,7 @@ Try a named profile once. Never use `auto`, enumerate browsers, or cycle through
 
 ## GitHub and non-GitHub distribution
 
-Run `python scripts/install_skill.py --host auto` from the downloaded repository. It detects common Codex/Agent Skills and WorkBuddy locations. Use `--host all` to install to every common host, or choose `agents`, `codex`, or `workbuddy` explicitly. Existing installations are not overwritten unless `--force` is supplied.
+Run `python scripts/install_skill.py --host workbuddy` from the downloaded repository for WorkBuddy. Use `--host auto` when the host is unknown; it selects one destination in this order: WorkBuddy, Codex, generic Agent Skills. Use `--host all` only when intentionally syncing every common host. Existing installations are updated in place without removing the skill folder.
 
 For users who cannot reach GitHub, publish the same release archive through an accessible mirror such as Gitee or an approved file host. A mirror cannot eliminate the source website's own network or authentication requirements.
 
@@ -110,8 +112,8 @@ python scripts/run.py --doctor
 Common interpretations:
 
 - Missing Python dependency: allow automatic setup or select a reachable package index.
-- `AUTH_REQUIRED`: use an approved browser media handoff, a target-site Cookie file, or local media.
-- `UNSUPPORTED_URL` / `BROWSER_HANDOFF_REQUIRED`: use browser handoff or local media; do not improvise undocumented APIs.
+- `AUTH_REQUIRED`: provide local media exported from an authorized browser/session.
+- `UNSUPPORTED_URL` / `BROWSER_HANDOFF_REQUIRED`: provide local media; do not improvise undocumented APIs.
 - `DOWNLOAD_INCOMPLETE`: rerun the same command and output directory.
 - Local offline transcription fails: supply `--model-path` and ensure dependencies are cached.
 - Site format failure: keep the default `bestaudio/best` for transcription; request full video only when required.

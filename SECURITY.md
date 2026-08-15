@@ -9,7 +9,8 @@ Never attach browser cookie files, authorization headers, unredacted signed URLs
 ## Security model
 
 - Public access is Cookie-free. Browser profiles are never auto-enumerated.
-- Prefer browser-session media handoff without exposing Cookie values. User Cookie files are filtered to target-platform domains in a temporary jar that is removed after use.
+- WorkBuddy/beginner mode does not invoke browser, Cookie, OCR, or screenshot-reading tools; authenticated media should be provided as a local file.
+- Expert Cookie-file use requires a target-site-only Netscape file. Mixed all-browser exports are rejected, and no temporary Cookie copy is written.
 - Dependency and uncached-model downloads are confirm-first; non-interactive execution does not download them by default.
 - Local, private, link-local, reserved, and other non-global URL targets are blocked unless a trusted user explicitly passes `--allow-private-network`.
 - Common token/signature URL parameters are redacted from generated metadata and yt-dlp logger output.

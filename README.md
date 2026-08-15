@@ -2,19 +2,19 @@
 
 一个本地优先的 Agent Skill：从视频链接或本地音视频生成带时间戳的逐字稿和口播文案。口播整理只能改变空白与分段，不允许增加、删除或调换转写字符。
 
-当前版本：`v3.1.1`
+当前版本：`v3.2.0`
 
 [English](README.en.md)
 
 ## 功能
 
 - 处理本地 MP4、MOV、MKV、MP3、M4A、WAV、SRT 和 VTT。
-- 处理 yt-dlp 兼容的国内外网站，已针对 B 站、抖音和小红书设置清晰的失败与 Cookie 回退路径。
-- 优先复用平台字幕，否则用 faster-whisper 本地转写。
+- 处理 yt-dlp 兼容的国内外网站，已针对 B 站、抖音、小红书、视频号设置清晰边界。
+- 优先复用平台字幕；字幕可用时默认不再下载媒体，否则用 faster-whisper 本地转写。
 - 可选下载完整视频或提取 MP3。
 - 自动脱敏 URL 中常见的 token/签名参数，默认拦截本机和私网 URL。
 - 默认不读取浏览器 Cookie，也不在非交互环境中静默安装依赖。
-- 登录内容优先通过已授权浏览器把媒体交付到本地，不暴露 Cookie 值；Cookie 文件会按目标站点过滤。
+- WorkBuddy 默认不调用浏览器控制、Cookie、逐帧 OCR、截图识别或其他 skill；公开 URL 失败后只要求用户提供本地媒体文件。
 - WorkBuddy/Windows 前台进程可持续跟踪，下载和完整结果默认断点复用。
 - 兼容 Codex、通用 Agent Skills 目录和 WorkBuddy。
 
@@ -25,10 +25,10 @@
 从 GitHub/Gitee 克隆仓库，或下载 Release ZIP 并解压。进入 `video-audio-transcribe` 目录后运行：
 
 ```bash
-python scripts/install_skill.py --host auto
+python scripts/install_skill.py --host workbuddy
 ```
 
-`--host auto` 会检测已存在的 Agent Skills/Codex/WorkBuddy 目录；也可显式使用 `agents`、`codex`、`workbuddy` 或 `all`。安装器不会覆盖已存在的 Skill，除非传入 `--force`。
+如果不确定宿主，可使用 `--host auto`。它只会选择一个最合适的位置，优先 WorkBuddy，其次 Codex，再其次通用 Agent Skills。安装器会原地更新受管文件，不删除整个 Skill 目录；`--host all` 仅给维护者手动同步多个宿主使用。
 
 首次使用只进行一次合并确认，准备隔离运行时和 Whisper 模型：
 
@@ -48,15 +48,15 @@ python scripts/run.py "视频链接或本地文件" --output-dir transcription-o
 
 ## Cookie 与登录
 
-默认不读取 Cookie。公开访问失败后，优先让用户授权 WorkBuddy/Codex 的现有浏览器会话打开目标页并把视频保存为本地文件，再将本地文件交给 Skill；这个过程不提取 Cookie 值。
+默认不读取 Cookie，也不控制浏览器。公开访问失败后，在 WorkBuddy/新手模式中直接让用户从自己已登录、已授权的浏览器里保存/导出视频或音频文件，再把本地文件交给 Skill。
 
-浏览器交付不可用时，使用只包含目标站点的 Netscape Cookie 文件：
+高级 CLI 用户如果明确要求 Cookie 文件，可使用只包含目标站点的 Netscape Cookie 文件：
 
 ```bash
 python scripts/run.py URL --cookie-file /path/to/cookies.txt
 ```
 
-运行器只会复制与目标平台匹配的 Cookie 到权限受限的临时文件，排除其他站点 Cookie，并在本次尝试后删除临时副本。`--cookies chrome` 等直接浏览器读取仅保留为明确授权的单浏览器高级兜底；不会自动检测或轮询浏览器。
+运行器会拒绝混入其他站点 Cookie 的文件，不会复制、保存或清理临时 Cookie 副本。`--cookies chrome` 等直接浏览器读取仅保留为专家级、单浏览器、明确授权兜底；WorkBuddy 默认流程不要使用它。
 
 不要提交 Cookie 文件，不要将包含登录凭证的日志粘贴到 Issue。
 

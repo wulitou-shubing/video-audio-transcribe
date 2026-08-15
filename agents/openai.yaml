@@ -1,4 +1,4 @@
 interface:
   display_name: "视频音频转写"
-  short_description: "Resumable local transcription with safe browser handoff"
-  default_prompt: "Use $video-audio-transcribe to process this media with resumable setup and create a faithful spoken script without adding or removing transcript content."
+  short_description: "Local-first transcription with low-interaction WorkBuddy flow"
+  default_prompt: "Use $video-audio-transcribe with the low-interaction flow: one setup approval, no OCR or Cookie/browser-profile access, and a faithful spoken script without adding or removing transcript content."

@@ -53,9 +53,7 @@ class CoreTests(unittest.TestCase):
     def test_cookie_file_is_filtered_to_target_platform(self) -> None:
         content = """# Netscape HTTP Cookie File
 .xiaohongshu.com\tTRUE\t/\tTRUE\t0\ta1\tvalue1
-.google.com\tTRUE\t/\tTRUE\t0\ta2\tvalue2
 #HttpOnly_.xhslink.com\tTRUE\t/\tTRUE\t0\ta3\tvalue3
-.com\tTRUE\t/\tTRUE\t0\ta4\tvalue4
 """
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -67,18 +65,44 @@ class CoreTests(unittest.TestCase):
             scoped_text = scoped.read_text(encoding="utf-8")
             self.assertIn("value1", scoped_text)
             self.assertIn("value3", scoped_text)
-            self.assertNotIn("value2", scoped_text)
-            self.assertNotIn("value4", scoped_text)
+            self.assertEqual(scoped, source)
             self.assertEqual(report["included_cookie_count"], 2)
-            self.assertEqual(report["excluded_cookie_count"], 2)
+            self.assertEqual(report["excluded_cookie_count"], 0)
+            self.assertTrue(report["user_managed_cookie_file"])
             run.cleanup_scoped_cookie_file(scoped)
-            self.assertFalse(scoped.exists())
+            self.assertTrue(scoped.exists())
+
+    def test_mixed_cookie_file_is_rejected_instead_of_copied(self) -> None:
+        content = """# Netscape HTTP Cookie File
+.xiaohongshu.com\tTRUE\t/\tTRUE\t0\ta1\tvalue1
+.google.com\tTRUE\t/\tTRUE\t0\ta2\tvalue2
+"""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "cookies.txt"
+            source.write_text(content, encoding="utf-8")
+            with self.assertRaises(run.WorkflowError) as raised:
+                run.create_scoped_cookie_file(source, "https://www.xiaohongshu.com/explore/123", root / "out")
+            self.assertEqual(raised.exception.code, "COOKIE_SCOPE_MIXED")
 
     def test_download_errors_have_terminal_routes(self) -> None:
         auth = run.classify_download_failure("HTTP Error 403: login required; use fresh cookies")
         unsupported = run.classify_download_failure("Unsupported URL")
         self.assertEqual(auth.code, "AUTH_REQUIRED")
+        self.assertEqual(auth.next_action, "provide_local_media_exported_from_an_authorized_browser_session")
         self.assertEqual(unsupported.code, "UNSUPPORTED_URL")
+        self.assertEqual(unsupported.next_action, "provide_local_media_exported_from_an_authorized_browser_session")
+
+    def test_subtitle_url_skips_media_download_by_default(self) -> None:
+        args = run.build_parser().parse_args(["https://example.com/video"])
+        self.assertFalse(run.media_download_required(Path("source.srt"), args))
+        self.assertTrue(run.media_download_required(None, args))
+
+        mp3_args = run.build_parser().parse_args(["https://example.com/video", "--extract-mp3"])
+        self.assertTrue(run.media_download_required(Path("source.srt"), mp3_args))
+
+        video_args = run.build_parser().parse_args(["https://example.com/video", "--download-mode", "video"])
+        self.assertTrue(run.media_download_required(Path("source.srt"), video_args))
 
     def test_share_text_url_normalization(self) -> None:
         value, is_url = run.normalize_input("复制链接 https://bilibili.com/video/BV123?token=abc 打开")
@@ -193,6 +217,29 @@ class CoreTests(unittest.TestCase):
             self.assertTrue((destination / "scripts" / "setup.py").is_file())
             self.assertFalse((destination / "README.md").exists())
             self.assertFalse((destination / "tests").exists())
+
+    def test_installer_updates_in_place_without_deleting_existing_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            destination = install_skill.install_one(Path(temp) / "skills", force=False)
+            user_file = destination / "user-note.txt"
+            user_file.write_text("keep me", encoding="utf-8")
+            destination_again = install_skill.install_one(Path(temp) / "skills", force=True)
+            self.assertEqual(destination_again, destination)
+            self.assertEqual(user_file.read_text(encoding="utf-8"), "keep me")
+            self.assertTrue((destination / "SKILL.md").is_file())
+
+    def test_auto_install_selects_one_preferred_host(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            roots = {
+                "agents": base / ".agents" / "skills",
+                "codex": base / ".codex" / "skills",
+                "workbuddy": base / ".workbuddy" / "skills",
+            }
+            for root in roots.values():
+                root.parent.mkdir(parents=True)
+            with mock.patch.object(install_skill, "host_roots", return_value=roots):
+                self.assertEqual(install_skill.select_roots("auto"), [roots["workbuddy"]])
 
     def test_release_package_has_root_folder_and_checksum(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

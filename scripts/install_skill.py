@@ -30,31 +30,37 @@ def select_roots(host: str) -> list[Path]:
         return list(roots.values())
     if host != "auto":
         return [roots[host]]
-    detected = [root for root in roots.values() if root.parent.exists()]
-    unique = list(dict.fromkeys(detected))
-    return unique or [roots["agents"]]
+    for name in ("workbuddy", "codex", "agents"):
+        if roots[name].parent.exists():
+            return [roots[name]]
+    return [roots["agents"]]
 
 
 def install_one(skills_root: Path, force: bool) -> Path:
     destination = skills_root / SKILL_NAME
-    if destination.exists():
-        if not force:
-            raise RuntimeError(f"destination already exists: {destination}; rerun with --force to replace it")
-        shutil.rmtree(destination)
-    destination.mkdir(parents=True)
+    destination.mkdir(parents=True, exist_ok=True)
     for name in INCLUDED_FILES:
         source = SKILL_ROOT / name
         if source.exists():
             shutil.copy2(source, destination / name)
     for name in INCLUDED_DIRS:
-        shutil.copytree(SKILL_ROOT / name, destination / name, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        shutil.copytree(
+            SKILL_ROOT / name,
+            destination / name,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            dirs_exist_ok=True,
+        )
     return destination
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Install video-audio-transcribe for Codex/Agent Skills/WorkBuddy")
     parser.add_argument("--host", choices=["auto", "agents", "codex", "workbuddy", "all"], default="auto")
-    parser.add_argument("--force", action="store_true", help="Replace an existing installation")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Deprecated compatibility flag; updates managed files in place and never removes the skill folder",
+    )
     args = parser.parse_args()
 
     destinations = []

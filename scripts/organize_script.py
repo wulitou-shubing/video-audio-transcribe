@@ -23,10 +23,8 @@ def atomic_write_text(path: Path, content: str) -> None:
             os.fsync(handle.fileno())
         os.replace(tmp_name, path)
     except Exception:
-        try:
-            os.unlink(tmp_name)
-        except FileNotFoundError:
-            pass
+        # Leave the temporary file for inspection instead of deleting during
+        # failure handling; some managed hosts surface deletion prompts.
         raise
 
 

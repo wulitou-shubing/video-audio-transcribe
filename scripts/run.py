@@ -276,11 +276,12 @@ def cookie_domain_allowed(cookie_domain: str, allowed: tuple[str, ...]) -> bool:
     return any(domain == item or domain.endswith("." + item) for item in allowed)
 
 
-def create_scoped_cookie_file(source: Path, url: str, output_dir: Path) -> tuple[Path, dict[str, Any]]:
+def create_scoped_cookie_file(source: Path, url: str, _output_dir: Path) -> tuple[Path, dict[str, Any]]:
     if not source.is_file():
         raise WorkflowError("COOKIE_FILE_MISSING", "cookie file does not exist", "provide_cookie_file")
     allowed = allowed_cookie_domains(url)
     kept: list[str] = []
+    excluded: list[str] = []
     total_cookie_lines = 0
     for raw_line in source.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw_line
@@ -293,35 +294,30 @@ def create_scoped_cookie_file(source: Path, url: str, output_dir: Path) -> tuple
         total_cookie_lines += 1
         if cookie_domain_allowed(parts[0], allowed):
             kept.append(line)
+        else:
+            excluded.append(line)
     if not kept:
         raise WorkflowError(
             "COOKIE_SCOPE_EMPTY",
             "cookie file contains no cookies for the requested site",
             "export_site_scoped_cookie_file_or_provide_local_media",
         )
-    private_dir = output_dir / ".private"
-    private_dir.mkdir(parents=True, exist_ok=True)
-    target = private_dir / "cookies.scoped.txt"
-    atomic_write_text(target, "# Netscape HTTP Cookie File\n" + "\n".join(kept) + "\n")
-    try:
-        target.chmod(0o600)
-    except OSError:
-        pass
-    return target, {
+    if excluded:
+        raise WorkflowError(
+            "COOKIE_SCOPE_MIXED",
+            "cookie file contains cookies outside the requested site",
+            "export_target_site_only_cookie_file_or_provide_local_media",
+        )
+    return source, {
         "allowed_domains": list(allowed),
         "included_cookie_count": len(kept),
         "excluded_cookie_count": total_cookie_lines - len(kept),
+        "user_managed_cookie_file": True,
     }
 
 
 def cleanup_scoped_cookie_file(path: Optional[Path]) -> None:
-    if not path:
-        return
-    try:
-        path.unlink(missing_ok=True)
-        path.parent.rmdir()
-    except OSError:
-        pass
+    return
 
 
 def classify_download_failure(error: Any) -> WorkflowError:
@@ -330,18 +326,27 @@ def classify_download_failure(error: Any) -> WorkflowError:
         return WorkflowError(
             "AUTH_REQUIRED",
             "the site requires an authenticated session",
-            "use_browser_media_handoff_then_local_file_or_site_scoped_cookie_file",
+            "provide_local_media_exported_from_an_authorized_browser_session",
         )
     if UNSUPPORTED_ERROR_RE.search(message):
         return WorkflowError(
             "UNSUPPORTED_URL",
             "no supported public extractor is available for this URL",
-            "use_browser_media_handoff_or_provide_local_media",
+            "provide_local_media_exported_from_an_authorized_browser_session",
         )
     return WorkflowError(
         "DOWNLOAD_FAILED",
         "the public download attempt failed",
         "retry_later_or_provide_local_media",
+    )
+
+
+def media_download_required(subtitle_path: Optional[Path], args: argparse.Namespace) -> bool:
+    return (
+        subtitle_path is None
+        or bool(args.no_subtitles)
+        or bool(args.extract_mp3)
+        or args.download_mode == "video"
     )
 
 
@@ -531,6 +536,22 @@ def download_from_url(url: str, output_dir: Path, args: argparse.Namespace) -> d
                     flush=True,
                 )
 
+    webpage_url = info.get("webpage_url") or url
+    validate_public_url(webpage_url, args.allow_private_network)
+    if not media_download_required(subtitle_path, args):
+        emit_stage("download", "skipped", "Using the platform subtitle track; media download is not needed")
+        return {
+            "media_path": None,
+            "subtitle_path": subtitle_path,
+            "subtitle_kind": subtitle_kind,
+            "subtitle_source_key": subtitle_source_key,
+            "subtitle_language": subtitle_language,
+            "browser": selected_browser,
+            "title": info.get("title"),
+            "duration": info.get("duration"),
+            "webpage_url": webpage_url,
+        }
+
     media_dir = output_dir / "media"
     media_dir.mkdir(parents=True, exist_ok=True)
     selected_format = args.format
@@ -572,8 +593,6 @@ def download_from_url(url: str, output_dir: Path, args: argparse.Namespace) -> d
             "download did not produce a complete media file",
             "rerun_same_command_to_resume_or_provide_local_media",
         )
-    webpage_url = info.get("webpage_url") or url
-    validate_public_url(webpage_url, args.allow_private_network)
     return {
         "media_path": media_candidates[0],
         "subtitle_path": subtitle_path,
@@ -865,7 +884,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="none",
         help="Read one explicitly approved browser profile; never auto-discovers browsers",
     )
-    parser.add_argument("--cookie-file", help="Netscape cookie file; only target-site cookies are copied to a temporary jar")
+    parser.add_argument("--cookie-file", help="Advanced: user-managed target-site Netscape cookie file")
     parser.add_argument("--no-subtitles", action="store_true")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument(
@@ -923,7 +942,7 @@ def main() -> int:
     write_job_state(output_dir, "preflight", "running", input=expected_normalized)
 
     download: dict[str, Any] = {}
-    source_path: Path
+    source_path: Optional[Path] = None
     subtitle_path: Optional[Path] = None
     cookie_scope_report: Optional[dict[str, Any]] = None
     scoped_cookie_path: Optional[Path] = None
@@ -946,14 +965,22 @@ def main() -> int:
             download = download_from_url(input_value, output_dir, args)
         finally:
             cleanup_scoped_cookie_file(scoped_cookie_path)
-        source_path = Path(download["media_path"])
+        media_path = download.get("media_path")
+        source_path = Path(media_path) if media_path else None
         subtitle_path = download.get("subtitle_path")
     else:
         platform_name = "local-file"
         source_path = Path(input_value)
         if not source_path.is_file():
             raise FileNotFoundError(f"input file does not exist: {source_path}")
-    validate_file_size(source_path, args.max_file_size_mb)
+    if source_path is not None:
+        validate_file_size(source_path, args.max_file_size_mb)
+    elif not subtitle_path:
+        raise WorkflowError(
+            "DOWNLOAD_INCOMPLETE",
+            "download did not produce media or a usable subtitle track",
+            "rerun_same_command_to_resume_or_provide_local_media",
+        )
 
     if not is_url and source_path.suffix.lower() in {".srt", ".vtt"}:
         emit_stage("subtitle", "running", "Parsing local subtitles")
@@ -970,22 +997,34 @@ def main() -> int:
             "duration": download.get("duration"),
         }
     else:
+        if source_path is None:
+            raise WorkflowError(
+                "DOWNLOAD_INCOMPLETE",
+                "download did not produce a complete media file",
+                "rerun_same_command_to_resume_or_provide_local_media",
+            )
         write_job_state(output_dir, "transcribe", "running", input=expected_normalized)
         segments, transcript_meta = transcribe_media(source_path, args)
         transcript_meta["source"] = "whisper"
 
     if not segments:
         raise RuntimeError("no speech segments were produced")
+    if args.extract_mp3 and source_path is None:
+        raise WorkflowError(
+            "DOWNLOAD_INCOMPLETE",
+            "MP3 extraction requested but no media file was downloaded",
+            "rerun_with_no_subtitles_or_provide_local_media",
+        )
     mp3_path = extract_mp3(source_path, output_dir, args) if args.extract_mp3 else None
     metadata = {
         "skill_version": (SKILL_DIR / "VERSION").read_text(encoding="utf-8").strip()
         if (SKILL_DIR / "VERSION").is_file()
         else "unknown",
-        "input": redact_url(input_value) if is_url else source_path.name,
-        "normalized_input": redact_url(input_value) if is_url else source_path.name,
+        "input": redact_url(input_value) if is_url else (source_path.name if source_path else input_value),
+        "normalized_input": redact_url(input_value) if is_url else (source_path.name if source_path else input_value),
         "is_url": is_url,
         "platform": platform_name,
-        "media_path": str(source_path.relative_to(output_dir)) if is_url else source_path.name,
+        "media_path": str(source_path.relative_to(output_dir)) if is_url and source_path else (source_path.name if source_path else None),
         "mp3_path": str(mp3_path.relative_to(output_dir)) if mp3_path else None,
         "title": download.get("title"),
         "webpage_url": redact_url(download.get("webpage_url")),

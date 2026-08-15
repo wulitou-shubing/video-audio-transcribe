@@ -5,7 +5,7 @@ description: Download online video or audio from yt-dlp-compatible sites, proces
 
 # Video Audio Transcribe
 
-Turn a URL or local media file into resumable transcript artifacts with one command. Keep this workflow deterministic; do not improvise undocumented download or anti-bot methods.
+Turn a URL or local media file into resumable transcript artifacts with one command. Keep this workflow deterministic; do not improvise undocumented download, OCR, or anti-bot methods.
 
 ## Prepare once
 
@@ -16,6 +16,13 @@ python scripts/setup.py --yes
 ```
 
 This setup never reads browser cookies. It reuses caches, selects the official or mirror model endpoint, keeps the parent process alive on Windows/WorkBuddy, and emits short progress heartbeats. For a fully offline machine, use `--offline --wheel-dir WHEELS --model-path MODEL_DIR` with the same script.
+
+In WorkBuddy or another beginner-oriented host, keep interaction to the smallest useful surface:
+
+- Do not invoke browser-control, Cookie, OCR, screen-reading, or unrelated media skills.
+- Ask for setup approval once, then run `python scripts/setup.py --yes`.
+- If a public URL cannot be accessed, stop after the structured error and ask for a local media file exported by the user from their authorized browser/session.
+- Do not continue by trying browser profiles, exported cookies, headless browser workarounds, or repeated platform-specific bypasses.
 
 ## Run the workflow
 
@@ -29,10 +36,11 @@ The script must:
 
 1. Normalize a URL that omits `https://`.
 2. Prefer an existing subtitle track when available.
-3. Otherwise download the best available audio and transcribe it locally.
-4. For local media, transcribe the file directly; do not require ffmpeg.
-5. Write `transcript.json`, `timestamped-transcript.txt`, `spoken-script.txt`, `faithfulness.json`, and `metadata.json`.
-6. Verify that `spoken-script.txt` contains exactly the transcript characters in the same order after whitespace is ignored.
+3. If a subtitle track is usable, skip media download unless the user explicitly requested video or MP3 output.
+4. Otherwise download the best available audio and transcribe it locally.
+5. For local media, transcribe the file directly; do not require ffmpeg.
+6. Write `transcript.json`, `timestamped-transcript.txt`, `spoken-script.txt`, `faithfulness.json`, and `metadata.json`.
+7. Verify that `spoken-script.txt` contains exactly the transcript characters in the same order after whitespace is ignored.
 
 Use `--download-mode video` when the user explicitly requests the full video. Use `--extract-mp3` when the user explicitly requests MP3 output. The runner uses a system ffmpeg when present and can fall back to the `imageio-ffmpeg` bundled binary.
 
@@ -66,17 +74,18 @@ If the user requests rewriting or summarization, create a separate clearly named
 - Use `--no-subtitles` to force Whisper.
 - Start every URL with one public, no-cookie attempt.
 - Never enumerate browsers, inspect cookie databases, local storage, passwords, or session stores automatically.
-- When one or more URLs return `AUTH_REQUIRED` or `BROWSER_HANDOFF_REQUIRED`, consolidate them into one user-facing decision.
-- Prefer an explicitly approved existing browser session: open only the target URLs with a supported host browser tool, save/download the media to the local job directory, then run this script on the local files. Never extract or display Cookie values during browser handoff.
-- If browser handoff is unavailable, accept a user-exported Netscape Cookie file with `--cookie-file PATH`. The runner copies only cookies matching the target platform into a permission-restricted temporary file and deletes that copy after the attempt.
-- Use `--cookies chrome` (or one other named browser) only as an advanced last resort after explicit approval for that single profile. Try it once; never cycle through installed browsers.
-- If the approved route fails, request a locally exported media file. Do not try undocumented APIs, signature generation, headless-browser bypasses, CAPTCHA workarounds, or unrelated skills.
+- When one or more URLs return `AUTH_REQUIRED` or `BROWSER_HANDOFF_REQUIRED`, consolidate them into one user-facing local-file request.
+- Ask the user to export/save the media from their already authorized browser/session, then run this script on that local file.
+- Do not use OCR, frame extraction, screenshot reading, undocumented APIs, signature generation, headless-browser bypasses, CAPTCHA workarounds, or unrelated skills.
+- Do not use `--cookie-file` or `--cookies` in WorkBuddy/beginner mode. Those flags are CLI-only expert tools for users who explicitly request Cookie-file processing.
+- If an expert supplies `--cookie-file PATH`, require a Netscape Cookie file that contains only the target site's cookies. Do not accept mixed all-browser exports.
+- Use `--cookies chrome` (or one other named browser) only as an expert last resort after explicit approval for that single profile. Try it once; never cycle through installed browsers.
 - For URL transcription, download audio by default. Only download full video when the user explicitly asks for it.
 
 Treat structured errors as terminal routing signals:
 
-- `AUTH_REQUIRED`: ask once for browser media handoff; otherwise request a site-scoped Cookie file or local media.
-- `BROWSER_HANDOFF_REQUIRED` / `UNSUPPORTED_URL`: use an approved browser session or local media.
+- `AUTH_REQUIRED`: ask once for a local media file exported from an authorized browser/session.
+- `BROWSER_HANDOFF_REQUIRED` / `UNSUPPORTED_URL`: request local media.
 - `DOWNLOAD_INCOMPLETE`: rerun the same command and output directory.
 - `MODEL_UNAVAILABLE`: retry the mirror once or use a local/offline model.
 
