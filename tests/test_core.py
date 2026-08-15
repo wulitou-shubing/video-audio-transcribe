@@ -14,10 +14,16 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import run  # noqa: E402
 import install_skill  # noqa: E402
 import package_release  # noqa: E402
-from organize_script import content_without_whitespace, create_spoken_script  # noqa: E402
+import run  # noqa: E402
+from organize_script import (  # noqa: E402
+    content_without_whitespace,
+    create_calibrated_spoken_script,
+    create_spoken_script,
+    load_calibration_glossary,
+    replacement_only,
+)
 
 
 class CoreTests(unittest.TestCase):
@@ -155,6 +161,37 @@ class CoreTests(unittest.TestCase):
                 content_without_whitespace(source),
                 content_without_whitespace(output.read_text(encoding="utf-8")),
             )
+
+    def test_calibrated_script_only_allows_substitutions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "spoken.txt"
+            source.write_text("這個視頻講蘇格拉蒂。\n", encoding="utf-8")
+            glossary = root / "glossary.json"
+            glossary.write_text(json.dumps({"苏格拉蒂": "苏格拉底"}, ensure_ascii=False), encoding="utf-8")
+            output = root / "calibrated.txt"
+            report_path = root / "calibration.json"
+
+            report = create_calibrated_spoken_script(source, output, report_path, "zh-hans", glossary)
+
+            self.assertEqual(output.read_text(encoding="utf-8"), "这个视频讲苏格拉底。\n")
+            self.assertTrue(report["replacement_only_ignoring_whitespace"])
+            self.assertGreater(report["changed_character_count"], 0)
+            self.assertEqual(
+                len(content_without_whitespace(source.read_text(encoding="utf-8"))),
+                len(content_without_whitespace(output.read_text(encoding="utf-8"))),
+            )
+
+    def test_calibration_glossary_rejects_insertions_and_deletions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            glossary = Path(temp) / "glossary.json"
+            glossary.write_text(json.dumps({"罗翔": "罗翔老师"}, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_calibration_glossary(glossary)
+
+    def test_replacement_guard_rejects_insertions(self) -> None:
+        self.assertTrue(replacement_only("苏格拉蒂", "苏格拉底"))
+        self.assertFalse(replacement_only("罗翔", "罗翔老师"))
 
     def test_local_srt_end_to_end_needs_no_third_party_dependency(self) -> None:
         srt = """1

@@ -1,6 +1,6 @@
 ---
 name: video-audio-transcribe
-description: Download online video or audio from yt-dlp-compatible sites, process local media, reuse available subtitles, transcribe speech with faster-whisper, and produce timestamped transcripts plus a strictly faithful spoken-script version with zero added or removed transcript characters. Use for video-to-text, audio-to-text, subtitle extraction, MP3/audio extraction, Douyin/Xiaohongshu/Bilibili and other compatible links, locally exported Weixin Channels/视频号 media, local MP4/MOV/MKV/MP3/M4A/WAV files, or requests for 口播文案、逐字稿、字幕、语音转写. Do not use the faithful-script output for summarization or rewriting.
+description: Download online video or audio from yt-dlp-compatible sites, process local media, reuse available subtitles, transcribe speech with faster-whisper, and produce timestamped transcripts plus a strictly faithful spoken-script version with zero added or removed transcript characters. Optionally create an audited substitution-only calibrated script for Simplified Chinese variants or user-provided equal-length typo/name fixes. Use for video-to-text, audio-to-text, subtitle extraction, MP3/audio extraction, Douyin/Xiaohongshu/Bilibili and other compatible links, locally exported Weixin Channels/视频号 media, local MP4/MOV/MKV/MP3/M4A/WAV files, or requests for 口播文案、逐字稿、字幕、语音转写、繁简校准、错别字校准. Do not use the faithful-script output for summarization or rewriting.
 ---
 
 # Video Audio Transcribe
@@ -40,7 +40,8 @@ The script must:
 4. Otherwise download the best available audio and transcribe it locally.
 5. For local media, transcribe the file directly; do not require ffmpeg.
 6. Write `transcript.json`, `timestamped-transcript.txt`, `spoken-script.txt`, `faithfulness.json`, and `metadata.json`.
-7. Verify that `spoken-script.txt` contains exactly the transcript characters in the same order after whitespace is ignored.
+7. When the user asks for 校准, 繁简转换, or known typo/name correction, also write `calibrated-spoken-script.txt` and `calibration-report.json`.
+8. Verify that `spoken-script.txt` contains exactly the transcript characters in the same order after whitespace is ignored.
 
 Use `--download-mode video` when the user explicitly requests the full video. Use `--extract-mp3` when the user explicitly requests MP3 output. The runner uses a system ffmpeg when present and can fall back to the `imageio-ffmpeg` bundled binary.
 
@@ -66,6 +67,18 @@ Treat `spoken-script.txt` as a zero-addition, zero-deletion artifact.
 This validation proves that no content changed between `transcript.json` and `spoken-script.txt`. It cannot prove that speech recognition perfectly matches the original audio. Preserve the timestamped transcript and source media so uncertain recognition can be reviewed.
 
 If the user requests rewriting or summarization, create a separate clearly named file and preserve the faithful files unchanged. A rewritten file is not the faithful spoken script.
+
+## Calibrate without changing content
+
+Keep calibration optional and auditable. Never overwrite `spoken-script.txt`.
+
+- Use `--calibrate-script zh-hans` only when the user asks for simplified Chinese output or complains about Traditional Chinese variants.
+- Use `--calibration-glossary GLOSSARY.json` only for known typo, name, brand, or term corrections supplied by the user or clearly established in context.
+- Require every glossary replacement to preserve the non-whitespace character count, for example `{"苏格拉蒂": "苏格拉底"}` is allowed and `{"罗翔": "罗翔老师"}` is rejected.
+- Treat `calibrated-spoken-script.txt` as a substitution-only file: characters may be replaced at the same positions, but no speech, sentence, punctuation, example, transition, explanation, or label may be inserted or deleted.
+- Require `calibration-report.json` to report `replacement_only_ignoring_whitespace: true` before presenting the calibrated script.
+- If a likely correction needs adding, deleting, splitting, merging, reordering, or guessing words from context, do not apply it. Mention it as a review note outside the transcript artifacts.
+- Present `spoken-script.txt` as the source of truth. Present `calibrated-spoken-script.txt` as a convenience copy with an audit trail.
 
 ## Choose sources
 

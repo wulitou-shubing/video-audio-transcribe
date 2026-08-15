@@ -1,4 +1,4 @@
 interface:
   display_name: "视频音频转写"
-  short_description: "Local-first transcription with low-interaction WorkBuddy flow"
-  default_prompt: "Use $video-audio-transcribe with the low-interaction flow: one setup approval, no OCR or Cookie/browser-profile access, and a faithful spoken script without adding or removing transcript content."
+  short_description: "Local-first transcription with audited script calibration"
+  default_prompt: "Use $video-audio-transcribe with low interaction, no OCR or Cookie/browser-profile access, and produce a faithful spoken script plus audited substitution-only calibration when requested."

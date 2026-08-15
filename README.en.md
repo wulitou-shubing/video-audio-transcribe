@@ -2,7 +2,7 @@
 
 A local-first Agent Skill that turns media URLs or local audio/video into timestamped transcripts and a faithful spoken-script artifact. Spoken-script organization may change whitespace and paragraph boundaries only; it must not add, remove, or reorder transcript characters.
 
-Current version: `v3.2.0`
+Current version: `v3.3.0`
 
 [简体中文](README.md)
 
@@ -11,6 +11,7 @@ Current version: `v3.2.0`
 - Local MP4, MOV, MKV, MP3, M4A, WAV, SRT, and VTT input.
 - Best-effort support for yt-dlp-compatible sites, with explicit boundaries for Bilibili, Douyin, Xiaohongshu, Weixin Channels, and international sites.
 - Existing subtitles first; skip media download when a usable subtitle is enough.
+- Optional audited calibration output for Simplified Chinese variants and user-provided equal-length typo/name fixes.
 - Optional full-video download and MP3 extraction.
 - URL secret redaction and private-network blocking.
 - No browser-cookie access by default and no silent dependency installation in non-interactive hosts.
@@ -46,5 +47,25 @@ Public access is attempted without cookies. In WorkBuddy/beginner mode, authenti
 Weixin Channels direct URLs are not promised. Export/download authorized media yourself and provide the local file. Support for every website is best effort and can change with authentication, region, and upstream extractor behavior.
 
 The `faithfulness.json` check proves only that non-whitespace characters did not change between the transcript and `spoken-script.txt`. It does not prove that speech recognition perfectly matches the recording.
+
+For calibrated output, keep `spoken-script.txt` as the source of truth and run:
+
+```bash
+python scripts/run.py "MEDIA_URL_OR_LOCAL_FILE" --output-dir transcription-output --calibrate-script zh-hans
+```
+
+Known typo, name, brand, and term corrections can be supplied with an equal-length JSON glossary:
+
+```json
+{
+  "苏格拉蒂": "苏格拉底"
+}
+```
+
+```bash
+python scripts/run.py "MEDIA_URL_OR_LOCAL_FILE" --output-dir transcription-output --calibrate-script zh-hans --calibration-glossary glossary.json
+```
+
+The runner writes `calibrated-spoken-script.txt` and `calibration-report.json` only when validation proves the calibrated copy used substitutions only, with no inserted or deleted non-whitespace characters.
 
 See [SECURITY.md](SECURITY.md) before reporting sensitive download failures. Licensed under the [MIT License](LICENSE).

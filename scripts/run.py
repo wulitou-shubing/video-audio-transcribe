@@ -22,7 +22,7 @@ from typing import Any, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
-from organize_script import atomic_write_text, create_spoken_script
+from organize_script import atomic_write_text, create_calibrated_spoken_script, create_spoken_script
 
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
@@ -771,6 +771,8 @@ def write_transcript_outputs(
     timestamped = output_dir / "timestamped-transcript.txt"
     spoken_script = output_dir / "spoken-script.txt"
     faithfulness = output_dir / "faithfulness.json"
+    calibrated_script = output_dir / "calibrated-spoken-script.txt"
+    calibration_report = output_dir / "calibration-report.json"
     metadata_path = output_dir / "metadata.json"
 
     transcript_data = {"segments": segments}
@@ -779,17 +781,32 @@ def write_transcript_outputs(
     atomic_write_text(timestamped, "\n".join(lines) + ("\n" if lines else ""))
     report = create_spoken_script(segments, spoken_script, faithfulness, args.segments_per_paragraph)
     metadata["faithfulness"] = report
+    calibration_enabled = args.calibrate_script != "none" or args.calibration_glossary
+    calibration = None
+    if calibration_enabled:
+        calibration = create_calibrated_spoken_script(
+            spoken_script,
+            calibrated_script,
+            calibration_report,
+            args.calibrate_script,
+            Path(args.calibration_glossary).expanduser() if args.calibration_glossary else None,
+        )
+        metadata["calibration"] = calibration
     atomic_write_text(metadata_path, json.dumps(metadata, ensure_ascii=False, indent=2) + "\n")
-    return {
+    outputs = {
         "spoken_script": spoken_script,
         "timestamped_transcript": timestamped,
         "transcript_json": transcript_json,
         "faithfulness": faithfulness,
         "metadata": metadata_path,
     }
+    if calibration_enabled:
+        outputs["calibrated_spoken_script"] = calibrated_script
+        outputs["calibration_report"] = calibration_report
+    return outputs
 
 
-def resume_if_complete(output_dir: Path, normalized_input: str) -> Optional[dict[str, Any]]:
+def resume_if_complete(output_dir: Path, normalized_input: str, calibration_requested: bool = False) -> Optional[dict[str, Any]]:
     paths = {
         "spoken_script": output_dir / "spoken-script.txt",
         "timestamped_transcript": output_dir / "timestamped-transcript.txt",
@@ -797,6 +814,9 @@ def resume_if_complete(output_dir: Path, normalized_input: str) -> Optional[dict
         "faithfulness": output_dir / "faithfulness.json",
         "metadata": output_dir / "metadata.json",
     }
+    if calibration_requested:
+        paths["calibrated_spoken_script"] = output_dir / "calibrated-spoken-script.txt"
+        paths["calibration_report"] = output_dir / "calibration-report.json"
     if not all(path.is_file() for path in paths.values()):
         return None
     try:
@@ -807,6 +827,8 @@ def resume_if_complete(output_dir: Path, normalized_input: str) -> Optional[dict
     if not report.get("exact_match_ignoring_whitespace"):
         return None
     if metadata.get("normalized_input") != normalized_input:
+        return None
+    if calibration_requested and not metadata.get("calibration"):
         return None
     return {
         "status": "ok",
@@ -846,6 +868,8 @@ def doctor(args: argparse.Namespace) -> int:
         "browser_cookies_default": "none",
         "browser_cookie_auto_discovery": False,
         "site_scoped_cookie_filtering": True,
+        "calibration_default": "none",
+        "calibration_modes": ["none", "zh-hans"],
         "resume_default": True,
         "dependency_install_default": "ask",
         "model_download_default": "ask",
@@ -902,6 +926,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--progress-interval", type=float, default=15.0)
     parser.add_argument("--no-resume", action="store_true", help="Ignore existing complete outputs")
     parser.add_argument("--segments-per-paragraph", type=int, default=8)
+    parser.add_argument(
+        "--calibrate-script",
+        choices=["none", "zh-hans"],
+        default="none",
+        help="Write a substitution-only calibrated spoken script; never changes length/order",
+    )
+    parser.add_argument(
+        "--calibration-glossary",
+        help="JSON object/list of equal-length source -> target replacements for typo/name calibration",
+    )
     parser.add_argument("--max-duration", type=int, default=21600, help="Maximum seconds; 0 disables the limit")
     parser.add_argument("--max-file-size-mb", type=int, default=20480, help="Maximum local/downloaded media size; 0 disables")
     parser.add_argument("--min-free-space-mb", type=int, default=1024)
@@ -932,7 +966,8 @@ def main() -> int:
     input_value, is_url = normalize_input(args.input)
     expected_normalized = redact_url(input_value) if is_url else Path(input_value).name
     if not args.no_resume:
-        resumed = resume_if_complete(output_dir, expected_normalized or "")
+        calibration_requested = args.calibrate_script != "none" or bool(args.calibration_glossary)
+        resumed = resume_if_complete(output_dir, expected_normalized or "", calibration_requested)
         if resumed:
             emit_stage("complete", "cached", "Existing verified outputs were reused")
             print(json.dumps(resumed, ensure_ascii=False, indent=2))

@@ -118,3 +118,15 @@ Common interpretations:
 - Local offline transcription fails: supply `--model-path` and ensure dependencies are cached.
 - Site format failure: keep the default `bestaudio/best` for transcription; request full video only when required.
 - `faithfulness.json` is false or missing: do not deliver `spoken-script.txt` as a faithful output.
+- `calibration-report.json` is false or missing: do not deliver `calibrated-spoken-script.txt` as a calibrated output.
+
+## Calibration
+
+Use calibration only when the user asks for Simplified Chinese variants or known typo/name/term fixes. It never replaces the faithful source file.
+
+```bash
+python scripts/run.py INPUT --calibrate-script zh-hans
+python scripts/run.py INPUT --calibrate-script zh-hans --calibration-glossary glossary.json
+```
+
+The glossary must be a JSON object or list with equal-length replacements after whitespace is ignored. Insertions, deletions, sentence rewrites, punctuation additions, speaker labels, inferred missing words, and summaries are rejected or must be reported only as external review notes.

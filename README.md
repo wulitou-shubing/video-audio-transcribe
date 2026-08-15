@@ -2,7 +2,7 @@
 
 一个本地优先的 Agent Skill：从视频链接或本地音视频生成带时间戳的逐字稿和口播文案。口播整理只能改变空白与分段，不允许增加、删除或调换转写字符。
 
-当前版本：`v3.2.0`
+当前版本：`v3.3.0`
 
 [English](README.en.md)
 
@@ -11,6 +11,7 @@
 - 处理本地 MP4、MOV、MKV、MP3、M4A、WAV、SRT 和 VTT。
 - 处理 yt-dlp 兼容的国内外网站，已针对 B 站、抖音、小红书、视频号设置清晰边界。
 - 优先复用平台字幕；字幕可用时默认不再下载媒体，否则用 faster-whisper 本地转写。
+- 可选输出可审计校准稿：只允许同长度字符替换，用于繁体转简体和用户词表中的错字/专名修正。
 - 可选下载完整视频或提取 MP3。
 - 自动脱敏 URL 中常见的 token/签名参数，默认拦截本机和私网 URL。
 - 默认不读取浏览器 Cookie，也不在非交互环境中静默安装依赖。
@@ -74,12 +75,34 @@ python scripts/run.py URL --cookie-file /path/to/cookies.txt
 ## 输出与保真性
 
 - `spoken-script.txt`：只改变空白的口播文案。
+- `calibrated-spoken-script.txt`：可选校准稿，只允许同位置替换，不允许加字、删字、改句子。
 - `timestamped-transcript.txt`：带时间戳文字稿。
 - `transcript.json`：结构化分段。
 - `faithfulness.json`：去除空白后的字符数、SHA-256 和精确匹配结果。
+- `calibration-report.json`：可选校准报告，列出替换并验证没有插入或删除。
 - `metadata.json`：来源、语言、字幕类型、模型和脱敏后的来源信息。
 
 `faithfulness.json` 只能证明“转写结果 → 口播文案”没有增删非空白字符，不能证明语音识别本身 100% 正确。
+
+需要繁简或错字校准时：
+
+```bash
+python scripts/run.py "视频链接或本地文件" --output-dir transcription-output --calibrate-script zh-hans
+```
+
+专名、术语、品牌名等错字请用 JSON 词表，且每条替换必须保持非空白字符数一致：
+
+```json
+{
+  "苏格拉蒂": "苏格拉底"
+}
+```
+
+```bash
+python scripts/run.py "视频链接或本地文件" --output-dir transcription-output --calibrate-script zh-hans --calibration-glossary glossary.json
+```
+
+像“罗翔”改成“罗翔老师”这种加字会被拒绝；不确定的校正只应写在说明里，不进入校准稿。
 
 ## 无法访问 GitHub
 
