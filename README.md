@@ -4,6 +4,8 @@
 
 当前版本：`v3.3.0`
 
+新用户只需要下载最新版：[`video-audio-transcribe-v3.3.0.zip`](https://github.com/wulitou-shubing/video-audio-transcribe/releases/latest)。不要下载源码快照或历史版本。
+
 [English](README.en.md)
 
 ## 功能
@@ -23,7 +25,7 @@
 
 需要 Python 3.9 或更高版本。
 
-从 GitHub/Gitee 克隆仓库，或下载 Release ZIP 并解压。进入 `video-audio-transcribe` 目录后运行：
+下载 Latest Release ZIP 并解压。进入 `video-audio-transcribe` 目录后运行：
 
 ```bash
 python scripts/install_skill.py --host workbuddy
@@ -46,6 +48,8 @@ python scripts/run.py "视频链接或本地文件" --output-dir transcription-o
 ```
 
 任务被宿主中断时，使用相同命令和相同输出目录重跑；已验证结果、模型缓存和媒体分片会自动复用。
+
+维护者或开发者也可以克隆仓库；普通用户优先使用 Release ZIP。
 
 ## Cookie 与登录
 

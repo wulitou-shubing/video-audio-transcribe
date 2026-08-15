@@ -4,6 +4,8 @@ A local-first Agent Skill that turns media URLs or local audio/video into timest
 
 Current version: `v3.3.0`
 
+New users should download only the latest ZIP: [`video-audio-transcribe-v3.3.0.zip`](https://github.com/wulitou-shubing/video-audio-transcribe/releases/latest). Do not download source snapshots or old releases.
+
 [简体中文](README.md)
 
 ## Highlights
@@ -23,7 +25,7 @@ Current version: `v3.3.0`
 
 Python 3.9 or newer is required.
 
-Clone the repository from GitHub/Gitee, or download and extract the Release ZIP. From the `video-audio-transcribe` directory, run:
+Download and extract the Latest Release ZIP. From the `video-audio-transcribe` directory, run:
 
 ```bash
 python scripts/install_skill.py --host workbuddy
@@ -41,6 +43,8 @@ python scripts/run.py "MEDIA_URL_OR_LOCAL_FILE" --output-dir transcription-outpu
 ```
 
 Rerun an interrupted job with the same command and output directory; completed verified outputs, cached models, and partial downloads are reused.
+
+Maintainers and developers can clone the repository; ordinary users should prefer the Release ZIP.
 
 Public access is attempted without cookies. In WorkBuddy/beginner mode, authenticated content should be saved/exported by the user from their own authorized browser session and then provided as a local media file. Expert CLI users may pass a target-site-only Netscape Cookie file with `--cookie-file`; mixed all-browser exports are rejected. Direct named-browser Cookie reading is an explicitly approved, one-profile last resort and never auto-enumerates browsers.
 
